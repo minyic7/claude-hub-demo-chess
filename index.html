@@ -90,6 +90,11 @@
     border-radius: 50%;
   }
 
+  .square.in-check {
+    background: #e74c3c !important;
+    box-shadow: inset 0 0 12px rgba(0,0,0,.4);
+  }
+
   .turn-indicator {
     text-align: center;
     color: #a0a0b0;
@@ -147,6 +152,7 @@ const turnIndicator = document.getElementById('turn');
 let currentTurn = 'white';
 let selectedSquare = null; // { row, col }
 let validMoves = [];       // [{ row, col }, ...]
+let gameOver = false;
 
 function inBounds(r, c) {
   return r >= 0 && r < 8 && c >= 0 && c < 8;
@@ -229,6 +235,121 @@ function getValidMoves(piece, row, col) {
   return moves;
 }
 
+function findKing(color) {
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = boardState[r][c];
+      if (p && p.type === 'king' && p.color === color) return { row: r, col: c };
+    }
+  }
+  return null;
+}
+
+function isKingInCheck(color, board) {
+  // Find king position on the given board
+  let kingRow = -1, kingCol = -1;
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = board[r][c];
+      if (p && p.type === 'king' && p.color === color) {
+        kingRow = r; kingCol = c; break;
+      }
+    }
+    if (kingRow >= 0) break;
+  }
+
+  const enemy = color === 'white' ? 'black' : 'white';
+
+  // Check all enemy pieces for attacks on king square
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = board[r][c];
+      if (!p || p.color !== enemy) continue;
+
+      if (p.type === 'pawn') {
+        const dir = p.color === 'white' ? -1 : 1;
+        if (r + dir === kingRow && (c - 1 === kingCol || c + 1 === kingCol)) return true;
+      } else if (p.type === 'knight') {
+        for (const [dr, dc] of [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]) {
+          if (r + dr === kingRow && c + dc === kingCol) return true;
+        }
+      } else if (p.type === 'king') {
+        if (Math.abs(r - kingRow) <= 1 && Math.abs(c - kingCol) <= 1) return true;
+      } else {
+        // Sliding pieces
+        let dirs = [];
+        if (p.type === 'rook' || p.type === 'queen') dirs.push([1,0],[-1,0],[0,1],[0,-1]);
+        if (p.type === 'bishop' || p.type === 'queen') dirs.push([1,1],[1,-1],[-1,1],[-1,-1]);
+        for (const [dr, dc] of dirs) {
+          let sr = r + dr, sc = c + dc;
+          while (sr >= 0 && sr < 8 && sc >= 0 && sc < 8) {
+            if (sr === kingRow && sc === kingCol) return true;
+            if (board[sr][sc]) break;
+            sr += dr; sc += dc;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function getLegalMoves(piece, row, col) {
+  const pseudo = getValidMoves(piece, row, col);
+  return pseudo.filter(m => {
+    // Simulate the move on a shallow copy
+    const saved = boardState[m.row][m.col];
+    boardState[m.row][m.col] = boardState[row][col];
+    boardState[row][col] = null;
+    const inCheck = isKingInCheck(piece.color, boardState);
+    // Undo
+    boardState[row][col] = boardState[m.row][m.col];
+    boardState[m.row][m.col] = saved;
+    return !inCheck;
+  });
+}
+
+function hasAnyLegalMoves(color) {
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = boardState[r][c];
+      if (p && p.color === color && getLegalMoves(p, r, c).length > 0) return true;
+    }
+  }
+  return false;
+}
+
+function highlightCheck() {
+  // Remove previous check highlights
+  container.querySelectorAll('.square.in-check').forEach(sq => sq.classList.remove('in-check'));
+  for (const color of ['white', 'black']) {
+    if (isKingInCheck(color, boardState)) {
+      const king = findKing(color);
+      if (king) getSquareEl(king.row, king.col).classList.add('in-check');
+    }
+  }
+}
+
+function checkGameState() {
+  const inCheck = isKingInCheck(currentTurn, boardState);
+  const hasLegal = hasAnyLegalMoves(currentTurn);
+
+  highlightCheck();
+
+  if (!hasLegal) {
+    gameOver = true;
+    if (inCheck) {
+      const winner = currentTurn === 'white' ? 'Black' : 'White';
+      turnIndicator.textContent = `Checkmate! ${winner} wins!`;
+    } else {
+      turnIndicator.textContent = 'Stalemate — draw!';
+    }
+  } else if (inCheck) {
+    const name = currentTurn === 'white' ? 'White' : 'Black';
+    turnIndicator.textContent = `${name}'s turn — Check!`;
+  }
+}
+
 function getSquareEl(row, col) {
   return container.querySelector(`.square[data-row="${row}"][data-col="${col}"]`);
 }
@@ -262,9 +383,12 @@ function movePiece(fromRow, fromCol, toRow, toCol) {
   // Switch turn
   currentTurn = currentTurn === 'white' ? 'black' : 'white';
   turnIndicator.textContent = currentTurn === 'white' ? "White's turn" : "Black's turn";
+
+  checkGameState();
 }
 
 function handleClick(row, col) {
+  if (gameOver) return;
   const piece = boardState[row][col];
 
   // If a piece is already selected
@@ -297,7 +421,7 @@ function handleClick(row, col) {
   // Select a piece of the current player
   if (piece && piece.color === currentTurn) {
     selectedSquare = { row, col };
-    validMoves = getValidMoves(piece, row, col);
+    validMoves = getLegalMoves(piece, row, col);
     applyHighlights();
   }
 }
