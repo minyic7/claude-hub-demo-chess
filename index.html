@@ -296,12 +296,9 @@ function handleClick(row, col) {
 
   // Select a piece of the current player
   if (piece && piece.color === currentTurn) {
-    const moves = getValidMoves(piece, row, col);
-    if (moves.length > 0) {
-      selectedSquare = { row, col };
-      validMoves = moves;
-      applyHighlights();
-    }
+    selectedSquare = { row, col };
+    validMoves = getValidMoves(piece, row, col);
+    applyHighlights();
   }
 }
 
