@@ -10,6 +10,7 @@
   body {
     min-height: 100vh;
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
     background: #1a1a2e;
@@ -69,11 +70,39 @@
   .square.light { background: #e8dcc8; }
   .square.dark  { background: #7b6b4f; }
   .square:hover { filter: brightness(1.12); }
+
+  .square.selected { background: #f6e96b !important; }
+  .square.valid-move { position: relative; }
+  .square.valid-move::after {
+    content: '';
+    position: absolute;
+    width: 30%;
+    height: 30%;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .square.valid-move.has-enemy::after {
+    width: 85%;
+    height: 85%;
+    background: transparent;
+    border: 5px solid rgba(0, 0, 0, 0.25);
+    border-radius: 50%;
+  }
+
+  .turn-indicator {
+    text-align: center;
+    color: #a0a0b0;
+    font-size: 1.1rem;
+    margin-top: 1rem;
+    font-weight: 600;
+  }
 </style>
 </head>
 <body>
 
 <div class="board-container" id="board"></div>
+<div class="turn-indicator" id="turn">White's turn</div>
 
 <script>
 const PIECES = {
@@ -113,9 +142,168 @@ const boardState = INITIAL.map(row => row.map(makePiece));
 
 const FILES = ['a','b','c','d','e','f','g','h'];
 const container = document.getElementById('board');
+const turnIndicator = document.getElementById('turn');
 
+let currentTurn = 'white';
+let selectedSquare = null; // { row, col }
+let validMoves = [];       // [{ row, col }, ...]
+
+function inBounds(r, c) {
+  return r >= 0 && r < 8 && c >= 0 && c < 8;
+}
+
+function slidingMoves(row, col, directions) {
+  const piece = boardState[row][col];
+  const moves = [];
+  for (const [dr, dc] of directions) {
+    let r = row + dr, c = col + dc;
+    while (inBounds(r, c)) {
+      const target = boardState[r][c];
+      if (!target) {
+        moves.push({ row: r, col: c });
+      } else {
+        if (target.color !== piece.color) moves.push({ row: r, col: c });
+        break;
+      }
+      r += dr;
+      c += dc;
+    }
+  }
+  return moves;
+}
+
+function getValidMoves(piece, row, col) {
+  const moves = [];
+
+  if (piece.type === 'pawn') {
+    const dir = piece.color === 'white' ? -1 : 1;
+    const startRow = piece.color === 'white' ? 6 : 1;
+    // Forward one
+    if (inBounds(row + dir, col) && !boardState[row + dir][col]) {
+      moves.push({ row: row + dir, col });
+      // Forward two from start
+      if (row === startRow && !boardState[row + 2 * dir][col]) {
+        moves.push({ row: row + 2 * dir, col });
+      }
+    }
+    // Diagonal captures
+    for (const dc of [-1, 1]) {
+      const nr = row + dir, nc = col + dc;
+      if (inBounds(nr, nc) && boardState[nr][nc] && boardState[nr][nc].color !== piece.color) {
+        moves.push({ row: nr, col: nc });
+      }
+    }
+  }
+
+  if (piece.type === 'rook' || piece.type === 'queen') {
+    moves.push(...slidingMoves(row, col, [[1,0],[-1,0],[0,1],[0,-1]]));
+  }
+
+  if (piece.type === 'bishop' || piece.type === 'queen') {
+    moves.push(...slidingMoves(row, col, [[1,1],[1,-1],[-1,1],[-1,-1]]));
+  }
+
+  if (piece.type === 'knight') {
+    for (const [dr, dc] of [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]) {
+      const nr = row + dr, nc = col + dc;
+      if (inBounds(nr, nc)) {
+        const target = boardState[nr][nc];
+        if (!target || target.color !== piece.color) moves.push({ row: nr, col: nc });
+      }
+    }
+  }
+
+  if (piece.type === 'king') {
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nr = row + dr, nc = col + dc;
+        if (inBounds(nr, nc)) {
+          const target = boardState[nr][nc];
+          if (!target || target.color !== piece.color) moves.push({ row: nr, col: nc });
+        }
+      }
+    }
+  }
+
+  return moves;
+}
+
+function getSquareEl(row, col) {
+  return container.querySelector(`.square[data-row="${row}"][data-col="${col}"]`);
+}
+
+function clearHighlights() {
+  container.querySelectorAll('.square.selected, .square.valid-move').forEach(sq => {
+    sq.classList.remove('selected', 'valid-move', 'has-enemy');
+  });
+}
+
+function applyHighlights() {
+  if (!selectedSquare) return;
+  getSquareEl(selectedSquare.row, selectedSquare.col).classList.add('selected');
+  for (const m of validMoves) {
+    const el = getSquareEl(m.row, m.col);
+    el.classList.add('valid-move');
+    if (boardState[m.row][m.col]) el.classList.add('has-enemy');
+  }
+}
+
+function movePiece(fromRow, fromCol, toRow, toCol) {
+  boardState[toRow][toCol] = boardState[fromRow][fromCol];
+  boardState[fromRow][fromCol] = null;
+
+  // Update DOM
+  const fromEl = getSquareEl(fromRow, fromCol);
+  const toEl = getSquareEl(toRow, toCol);
+  fromEl.textContent = '';
+  toEl.textContent = boardState[toRow][toCol].symbol;
+
+  // Switch turn
+  currentTurn = currentTurn === 'white' ? 'black' : 'white';
+  turnIndicator.textContent = currentTurn === 'white' ? "White's turn" : "Black's turn";
+}
+
+function handleClick(row, col) {
+  const piece = boardState[row][col];
+
+  // If a piece is already selected
+  if (selectedSquare) {
+    // Check if clicking a valid move destination
+    const isValid = validMoves.some(m => m.row === row && m.col === col);
+    if (isValid) {
+      clearHighlights();
+      movePiece(selectedSquare.row, selectedSquare.col, row, col);
+      selectedSquare = null;
+      validMoves = [];
+      return;
+    }
+
+    // Deselect current piece
+    const prevRow = selectedSquare.row;
+    const prevCol = selectedSquare.col;
+    clearHighlights();
+    selectedSquare = null;
+    validMoves = [];
+
+    // If clicked a different own piece, select it instead
+    if (piece && piece.color === currentTurn && !(row === prevRow && col === prevCol)) {
+      // fall through to selection below
+    } else {
+      return;
+    }
+  }
+
+  // Select a piece of the current player
+  if (piece && piece.color === currentTurn) {
+    selectedSquare = { row, col };
+    validMoves = getValidMoves(piece, row, col);
+    applyHighlights();
+  }
+}
+
+// Build the board
 for (let row = 0; row < 8; row++) {
-  // Rank label
   const rl = document.createElement('div');
   rl.className = 'rank-label';
   rl.textContent = 8 - row;
@@ -131,9 +319,7 @@ for (let row = 0; row < 8; row++) {
     const piece = boardState[row][col];
     if (piece) sq.textContent = piece.symbol;
 
-    sq.addEventListener('click', () => {
-      // Placeholder for future move selection
-    });
+    sq.addEventListener('click', () => handleClick(row, col));
 
     container.appendChild(sq);
   }
