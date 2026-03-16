@@ -876,6 +876,302 @@ document.getElementById('newGameBtn').addEventListener('click', newGame);
 
 // Initial setup
 newGame();
+
+// =========================================================
+// AI Engine — Board Evaluation & Minimax Search
+// =========================================================
+
+const AI_PIECE_VALUES = {
+  pawn: 100,
+  knight: 320,
+  bishop: 330,
+  rook: 500,
+  queen: 900,
+  king: 20000,
+};
+
+// Piece-square tables (from white's perspective; mirrored for black)
+// Values are added to the base piece value for positional scoring.
+const PST = {
+  pawn: [
+    [  0,  0,  0,  0,  0,  0,  0,  0],
+    [ 50, 50, 50, 50, 50, 50, 50, 50],
+    [ 10, 10, 20, 30, 30, 20, 10, 10],
+    [  5,  5, 10, 25, 25, 10,  5,  5],
+    [  0,  0,  0, 20, 20,  0,  0,  0],
+    [  5, -5,-10,  0,  0,-10, -5,  5],
+    [  5, 10, 10,-20,-20, 10, 10,  5],
+    [  0,  0,  0,  0,  0,  0,  0,  0],
+  ],
+  knight: [
+    [-50,-40,-30,-30,-30,-30,-40,-50],
+    [-40,-20,  0,  0,  0,  0,-20,-40],
+    [-30,  0, 10, 15, 15, 10,  0,-30],
+    [-30,  5, 15, 20, 20, 15,  5,-30],
+    [-30,  0, 15, 20, 20, 15,  0,-30],
+    [-30,  5, 10, 15, 15, 10,  5,-30],
+    [-40,-20,  0,  5,  5,  0,-20,-40],
+    [-50,-40,-30,-30,-30,-30,-40,-50],
+  ],
+  bishop: [
+    [-20,-10,-10,-10,-10,-10,-10,-20],
+    [-10,  0,  0,  0,  0,  0,  0,-10],
+    [-10,  0, 10, 10, 10, 10,  0,-10],
+    [-10,  5,  5, 10, 10,  5,  5,-10],
+    [-10,  0,  5, 10, 10,  5,  0,-10],
+    [-10, 10,  5, 10, 10,  5, 10,-10],
+    [-10,  5,  0,  0,  0,  0,  5,-10],
+    [-20,-10,-10,-10,-10,-10,-10,-20],
+  ],
+  rook: [
+    [  0,  0,  0,  0,  0,  0,  0,  0],
+    [  5, 10, 10, 10, 10, 10, 10,  5],
+    [ -5,  0,  0,  0,  0,  0,  0, -5],
+    [ -5,  0,  0,  0,  0,  0,  0, -5],
+    [ -5,  0,  0,  0,  0,  0,  0, -5],
+    [ -5,  0,  0,  0,  0,  0,  0, -5],
+    [ -5,  0,  0,  0,  0,  0,  0, -5],
+    [  0,  0,  0,  5,  5,  0,  0,  0],
+  ],
+  queen: [
+    [-20,-10,-10, -5, -5,-10,-10,-20],
+    [-10,  0,  0,  0,  0,  0,  0,-10],
+    [-10,  0,  5,  5,  5,  5,  0,-10],
+    [ -5,  0,  5,  5,  5,  5,  0, -5],
+    [  0,  0,  5,  5,  5,  5,  0, -5],
+    [-10,  5,  5,  5,  5,  5,  0,-10],
+    [-10,  0,  5,  0,  0,  0,  0,-10],
+    [-20,-10,-10, -5, -5,-10,-10,-20],
+  ],
+  king: [
+    [-30,-40,-40,-50,-50,-40,-40,-30],
+    [-30,-40,-40,-50,-50,-40,-40,-30],
+    [-30,-40,-40,-50,-50,-40,-40,-30],
+    [-30,-40,-40,-50,-50,-40,-40,-30],
+    [-20,-30,-30,-40,-40,-30,-30,-20],
+    [-10,-20,-20,-20,-20,-20,-20,-10],
+    [ 20, 20,  0,  0,  0,  0, 20, 20],
+    [ 20, 30, 10,  0,  0, 10, 30, 20],
+  ],
+};
+
+function getPstValue(type, color, row, col) {
+  const table = PST[type];
+  if (!table) return 0;
+  // White pieces use the table as-is; black pieces mirror vertically
+  const r = color === 'white' ? row : 7 - row;
+  return table[r][col];
+}
+
+function evaluateBoard() {
+  let score = 0;
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = boardState[r][c];
+      if (!p) continue;
+      const material = AI_PIECE_VALUES[p.type];
+      const positional = getPstValue(p.type, p.color, r, c);
+      const value = material + positional;
+      score += p.color === 'white' ? value : -value;
+    }
+  }
+  return score;
+}
+
+// Generate all legal moves for a given color in the current boardState.
+// Each move is { fromRow, fromCol, toRow, toCol, enPassant?, castling? }
+function generateAllLegalMoves(color) {
+  const moves = [];
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = boardState[r][c];
+      if (!p || p.color !== color) continue;
+      const legal = getLegalMoves(p, r, c);
+      for (const m of legal) {
+        moves.push({ fromRow: r, fromCol: c, toRow: m.row, toCol: m.col, enPassant: m.enPassant, castling: m.castling });
+      }
+    }
+  }
+  return moves;
+}
+
+// Apply a move on boardState, returning an undo object to restore later.
+// Handles captures, en passant, castling, and auto-queen promotion.
+function applyMove(move) {
+  const { fromRow, fromCol, toRow, toCol } = move;
+  const piece = boardState[fromRow][fromCol];
+  const undo = {
+    fromRow, fromCol, toRow, toCol,
+    piece,
+    captured: boardState[toRow][toCol],
+    lastMove,
+    hasMoved: { ...hasMoved },
+    epCaptured: null,
+    castlingRook: null,
+    promoted: false,
+    originalPiece: null,
+  };
+
+  // Track king/rook moves for castling
+  if (piece.type === 'king') {
+    if (piece.color === 'white') hasMoved.whiteKing = true;
+    else hasMoved.blackKing = true;
+  }
+  if (piece.type === 'rook') {
+    if (piece.color === 'white') {
+      if (fromRow === 7 && fromCol === 0) hasMoved.whiteRookA = true;
+      if (fromRow === 7 && fromCol === 7) hasMoved.whiteRookH = true;
+    } else {
+      if (fromRow === 0 && fromCol === 0) hasMoved.blackRookA = true;
+      if (fromRow === 0 && fromCol === 7) hasMoved.blackRookH = true;
+    }
+  }
+  // Mark captured rooks
+  const cap = boardState[toRow][toCol];
+  if (cap && cap.type === 'rook') {
+    if (toRow === 7 && toCol === 0) hasMoved.whiteRookA = true;
+    if (toRow === 7 && toCol === 7) hasMoved.whiteRookH = true;
+    if (toRow === 0 && toCol === 0) hasMoved.blackRookA = true;
+    if (toRow === 0 && toCol === 7) hasMoved.blackRookH = true;
+  }
+
+  // En passant capture
+  if (move.enPassant) {
+    undo.epCaptured = boardState[fromRow][toCol];
+    boardState[fromRow][toCol] = null;
+  }
+
+  // Execute move
+  boardState[toRow][toCol] = piece;
+  boardState[fromRow][fromCol] = null;
+
+  // Castling rook movement
+  if (move.castling) {
+    const baseRow = toRow;
+    if (move.castling === 'kingside') {
+      undo.castlingRook = { rook: boardState[baseRow][7], fromC: 7, toC: 5 };
+      boardState[baseRow][5] = boardState[baseRow][7];
+      boardState[baseRow][7] = null;
+    } else {
+      undo.castlingRook = { rook: boardState[baseRow][0], fromC: 0, toC: 3 };
+      boardState[baseRow][3] = boardState[baseRow][0];
+      boardState[baseRow][0] = null;
+    }
+  }
+
+  // Pawn promotion — always promote to queen for AI
+  const promoRow = piece.color === 'white' ? 0 : 7;
+  if (piece.type === 'pawn' && toRow === promoRow) {
+    undo.promoted = true;
+    undo.originalPiece = piece;
+    const queenKey = piece.color === 'white' ? 'Q' : 'q';
+    boardState[toRow][toCol] = makePiece(queenKey);
+  }
+
+  // Update lastMove for en passant detection in deeper searches
+  lastMove = { piece: { ...piece }, fromRow, fromCol, toRow, toCol };
+
+  return undo;
+}
+
+function undoMove(undo) {
+  const { fromRow, fromCol, toRow, toCol } = undo;
+
+  // Restore the piece (use original if it was promoted)
+  boardState[fromRow][fromCol] = undo.promoted ? undo.originalPiece : boardState[toRow][toCol];
+  boardState[toRow][toCol] = undo.captured;
+
+  // Undo en passant capture
+  if (undo.epCaptured) {
+    boardState[fromRow][toCol] = undo.epCaptured;
+  }
+
+  // Undo castling rook
+  if (undo.castlingRook) {
+    const cr = undo.castlingRook;
+    boardState[toRow][cr.fromC] = boardState[toRow][cr.toC];
+    boardState[toRow][cr.toC] = null;
+  }
+
+  // Restore game state
+  lastMove = undo.lastMove;
+  hasMoved = undo.hasMoved;
+}
+
+// Minimax search (no alpha-beta pruning).
+// Returns the evaluation score from the perspective of the maximising player (white).
+// depth: remaining depth to search
+// isMaximising: true when it's white's turn to move
+function minimax(depth, isMaximising) {
+  if (depth === 0) {
+    return evaluateBoard();
+  }
+
+  const color = isMaximising ? 'white' : 'black';
+  const moves = generateAllLegalMoves(color);
+
+  // No legal moves: checkmate or stalemate
+  if (moves.length === 0) {
+    if (isKingInCheck(color, boardState)) {
+      // Checkmate — very bad for the side to move
+      return isMaximising ? -Infinity : Infinity;
+    }
+    return 0; // Stalemate
+  }
+
+  if (isMaximising) {
+    let best = -Infinity;
+    for (const move of moves) {
+      const undo = applyMove(move);
+      const val = minimax(depth - 1, false);
+      undoMove(undo);
+      if (val > best) best = val;
+    }
+    return best;
+  } else {
+    let best = Infinity;
+    for (const move of moves) {
+      const undo = applyMove(move);
+      const val = minimax(depth - 1, true);
+      undoMove(undo);
+      if (val < best) best = val;
+    }
+    return best;
+  }
+}
+
+// Returns the best move for the current player at the given search depth.
+// Returns { fromRow, fromCol, toRow, toCol, enPassant?, castling? } or null if no moves.
+function getBestMove(depth) {
+  const color = currentTurn;
+  const isMaximising = color === 'white';
+  const moves = generateAllLegalMoves(color);
+
+  if (moves.length === 0) return null;
+
+  let bestMove = null;
+  let bestScore = isMaximising ? -Infinity : Infinity;
+
+  for (const move of moves) {
+    const undo = applyMove(move);
+    const score = minimax(depth - 1, !isMaximising);
+    undoMove(undo);
+
+    if (isMaximising) {
+      if (score > bestScore) {
+        bestScore = score;
+        bestMove = move;
+      }
+    } else {
+      if (score < bestScore) {
+        bestScore = score;
+        bestMove = move;
+      }
+    }
+  }
+
+  return bestMove;
+}
 </script>
 </body>
 </html>
