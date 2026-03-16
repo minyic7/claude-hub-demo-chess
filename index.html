@@ -547,8 +547,12 @@ function movePiece(fromRow, fromCol, toRow, toCol) {
   // Update DOM
   const fromEl = getSquareEl(fromRow, fromCol);
   const toEl = getSquareEl(toRow, toCol);
-  fromEl.textContent = '';
-  toEl.textContent = boardState[toRow][toCol].symbol;
+  fromEl.innerHTML = '';
+  toEl.innerHTML = '';
+  const span = document.createElement('span');
+  span.className = 'piece';
+  span.textContent = boardState[toRow][toCol].symbol;
+  toEl.appendChild(span);
 
   lastMove = { fromRow, fromCol, toRow, toCol };
   highlightLastMove();
@@ -608,7 +612,12 @@ function buildBoard() {
       sq.dataset.col = col;
 
       const piece = boardState[row][col];
-      if (piece) sq.textContent = piece.symbol;
+      if (piece) {
+        const span = document.createElement('span');
+        span.className = 'piece';
+        span.textContent = piece.symbol;
+        sq.appendChild(span);
+      }
 
       sq.addEventListener('click', () => handleClick(row, col));
       container.appendChild(sq);
