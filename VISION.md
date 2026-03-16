@@ -4,6 +4,8 @@
 
 A playable chess game in the browser. Single HTML file, zero dependencies. Deployed to GitHub Pages. Built entirely by Claude Code — assets, rules, UI design, and gameplay all self-contained.
 
+Phase 2: Add a single-player mode with a basic AI opponent, keeping the zero-dependency single-file architecture.
+
 ## Scope
 
 ### In Scope
@@ -12,6 +14,7 @@ A playable chess game in the browser. Single HTML file, zero dependencies. Deplo
 - Two-player local mode — human vs human on the same screen
 - Chess pieces rendered in Unicode or SVG — no external image files
 - GitHub Pages deployment — push to main → live
+- AI opponent — minimax search with 3–4 move lookahead, single difficulty level, integrated into the existing single-file architecture (promoted from Out of Scope)
 
 ### Out of Scope
 - AI opponent
