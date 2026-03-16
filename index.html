@@ -82,6 +82,49 @@
   .new-game-btn:hover { background: #1a5276; }
   .new-game-btn:active { transform: scale(0.97); }
 
+  /* Mode selector */
+  .mode-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .mode-btn {
+    background: #0f3460;
+    color: #a0a0b0;
+    border: 1px solid #1a5276;
+    border-radius: 6px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    white-space: nowrap;
+  }
+
+  .mode-btn:hover { background: #1a5276; }
+  .mode-btn.active {
+    background: #1a5276;
+    color: #e0e0e8;
+    border-color: #f6e96b;
+  }
+
+  .ai-thinking {
+    color: #f6e96b;
+    font-style: italic;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .board-container.disabled {
+    pointer-events: none;
+    opacity: 0.85;
+  }
+
   /* Captured pieces */
   .captured-row {
     width: 100%;
@@ -255,6 +298,7 @@
     .status-bar { padding: 0.5rem 0.75rem; }
     .status-text { font-size: 0.9rem; }
     .new-game-btn { padding: 0.35rem 0.7rem; font-size: 0.8rem; }
+    .mode-btn { padding: 0.25rem 0.5rem; font-size: 0.7rem; }
     .rank-label, .file-label { font-size: 0.7rem; }
     .rank-label { width: 1.5rem; }
     .board-container { grid-template-columns: 1.5rem repeat(8, 1fr); }
@@ -266,7 +310,11 @@
 <div class="game-wrapper">
   <div class="status-bar">
     <div class="status-text" id="status"><span class="turn-dot white"></span>White's turn</div>
-    <button class="new-game-btn" id="newGameBtn">New Game</button>
+    <div class="mode-selector">
+      <button class="mode-btn active" id="modeHvH" title="Human vs Human">HvH</button>
+      <button class="mode-btn" id="modeHvAI" title="Human vs AI">HvAI</button>
+      <button class="new-game-btn" id="newGameBtn">New Game</button>
+    </div>
   </div>
 
   <div class="captured-row" id="capturedBlack">
@@ -340,6 +388,8 @@ let capturedBlack; // pieces captured BY black (white pieces)
 let lastMove;      // { piece, fromRow, fromCol, toRow, toCol }
 let hasMoved;      // track king/rook moves for castling
 let pendingPromotion; // { row, col } when awaiting promotion choice
+let playMode = 'hvh'; // 'hvh' or 'hva'
+let aiThinking = false;
 
 function initGameState() {
   boardState = INITIAL.map(row => row.map(makePiece));
@@ -761,6 +811,10 @@ function movePiece(fromRow, fromCol, toRow, toCol, moveInfo) {
 function finishTurn() {
   currentTurn = currentTurn === 'white' ? 'black' : 'white';
   updateStatus();
+  // Trigger AI move in HvAI mode when it's black's turn
+  if (playMode === 'hva' && currentTurn === 'black' && !gameOver) {
+    triggerAiMove();
+  }
 }
 
 function showPromotionDialog(color) {
@@ -790,7 +844,9 @@ function promoteToType(key) {
 }
 
 function handleClick(row, col) {
-  if (gameOver || pendingPromotion) return;
+  if (gameOver || pendingPromotion || aiThinking) return;
+  // In AI mode, human can only move white pieces
+  if (playMode === 'hva' && currentTurn === 'black') return;
   const piece = boardState[row][col];
 
   if (selectedSquare) {
@@ -873,6 +929,59 @@ function newGame() {
 
 // New Game button
 document.getElementById('newGameBtn').addEventListener('click', newGame);
+
+// Mode selector buttons
+const modeHvHBtn = document.getElementById('modeHvH');
+const modeHvAIBtn = document.getElementById('modeHvAI');
+
+modeHvHBtn.addEventListener('click', () => {
+  if (playMode === 'hvh') return;
+  playMode = 'hvh';
+  modeHvHBtn.classList.add('active');
+  modeHvAIBtn.classList.remove('active');
+  newGame();
+});
+
+modeHvAIBtn.addEventListener('click', () => {
+  if (playMode === 'hva') return;
+  playMode = 'hva';
+  modeHvAIBtn.classList.add('active');
+  modeHvHBtn.classList.remove('active');
+  newGame();
+});
+
+function triggerAiMove() {
+  aiThinking = true;
+  container.classList.add('disabled');
+  statusEl.innerHTML = '<span class="ai-thinking">AI thinking\u2026</span>';
+
+  setTimeout(() => {
+    const move = getBestMove(3);
+    if (!move) {
+      aiThinking = false;
+      container.classList.remove('disabled');
+      return;
+    }
+
+    // Execute the AI move using the same movePiece function
+    // But for pawn promotion, AI auto-promotes to queen via movePiece's
+    // showPromotionDialog path — we need to handle this differently.
+    const piece = boardState[move.fromRow][move.fromCol];
+    const promoRow = piece.color === 'white' ? 0 : 7;
+    const isPromotion = piece.type === 'pawn' && move.toRow === promoRow;
+
+    movePiece(move.fromRow, move.fromCol, move.toRow, move.toCol, move);
+
+    // If it was a promotion, auto-select queen (movePiece opened the dialog)
+    if (isPromotion && pendingPromotion) {
+      const queenKey = piece.color === 'white' ? 'Q' : 'q';
+      promoteToType(queenKey);
+    }
+
+    aiThinking = false;
+    container.classList.remove('disabled');
+  }, 400);
+}
 
 // Initial setup
 newGame();
